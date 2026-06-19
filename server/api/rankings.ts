@@ -1,14 +1,74 @@
 // @ts-nocheck
 import express from 'express';
-import { asc, desc, eq, and, isNotNull } from 'drizzle-orm';
+import { asc, desc, eq, and, isNotNull, ilike } from 'drizzle-orm';
 import { db } from '../db';
 import * as schema from '../schema';
+
 
 const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
-    const { position, limit = 50 } = req.query;
+    // const { position, limit = 50 } = req.query;
+    const {
+      position,
+      search,
+      page = '1',
+      limit = '50',
+    } = req.query;
+
+    // Create page variables
+
+    const pageNum = Math.max(
+      1,
+      Number(page)
+    );
+    
+    const limitNum = Math.max(
+      1,
+      Number(limit)
+    );
+    
+    const offset =
+      (pageNum - 1) *
+      limitNum;
+    //end of creating page variables
+
+    // dynamic
+    const conditions = [
+      eq(
+        schema.players.privacySetting,
+        'public'
+      ),
+      isNotNull(
+        schema.players.g5Rating
+      ),
+    ];
+
+    //position filter
+
+    if (
+      position &&
+      position !== 'All'
+    ) {
+      conditions.push(
+        eq(
+          schema.players.position,
+          String(position)
+        )
+      );
+    }
+
+    //  search filter
+
+    if (search) {
+      conditions.push(
+        ilike(
+          schema.players.name,
+          `%${search}%`
+        )
+      );
+    }
 
     const rows = await db
       .select({
@@ -25,16 +85,20 @@ router.get('/', async (req, res) => {
       .from(schema.players)
       // Only rated athletes appear on the board. This also keeps unrated test
       // accounts out, and avoids Postgres sorting NULL g5Rating first under DESC.
-      .where(and(eq(schema.players.privacySetting, 'public'), isNotNull(schema.players.g5Rating)))
+      // .where(and(eq(schema.players.privacySetting, 'public'), isNotNull(schema.players.g5Rating)))
+      .where(and(...conditions))
       // Tiebreak order: rating, then activity (XP), then name. The final name
       // sort makes ties deterministic so the board does not reshuffle equal
       // scores between refreshes (which reads as arbitrary to athletes).
       .orderBy(desc(schema.players.g5Rating), desc(schema.players.xpPoints), asc(schema.players.name))
-      .limit(Number(limit));
+      // .limit(Number(limit));
+      .limit(limitNum)
+      .offset(offset);
 
     let data = rows.map((p, i) => ({
       id: p.id,
-      rank: i + 1,
+      // rank: i + 1,
+      rank: offset + i + 1,
       name: p.name,
       school: p.school ?? '',
       position: p.position ?? '–',
@@ -49,7 +113,7 @@ router.get('/', async (req, res) => {
       data = data.filter(r => r.position === position);
     }
 
-    res.json({ success: true, data, total: data.length });
+    res.json({ success: true, data, total: data.length, page: pageNum, limit: limitNum, });
   } catch (error) {
     console.error('[rankings]', error);
     res.status(500).json({ success: false, error: 'Failed to fetch rankings' });

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import express from 'express';
-import { asc, desc, eq, and, isNotNull, ilike } from 'drizzle-orm';
+import { asc, desc, eq, and, isNotNull, ilike, sql, or } from 'drizzle-orm';
 import { db } from '../db';
 import * as schema from '../schema';
 
@@ -21,12 +21,12 @@ router.get('/', async (req, res) => {
 
     const pageNum = Math.max(
       1,
-      Number(page)
+      Number(page) || 1
     );
     
-    const limitNum = Math.max(
-      1,
-      Number(limit)
+    const limitNum = Math.min(
+      100,
+      Math.max(1, Number(limit) || 50)
     );
     
     const offset =
@@ -45,30 +45,38 @@ router.get('/', async (req, res) => {
       ),
     ];
 
-    //position filter
+    // //position filter
 
-    if (
-      position &&
-      position !== 'All'
-    ) {
-      conditions.push(
-        eq(
-          schema.players.position,
-          String(position)
-        )
-      );
-    }
+    // if (
+    //   position &&
+    //   position !== 'All'
+    // ) {
+    //   conditions.push(
+    //     eq(
+    //       schema.players.position,
+    //       String(position)
+    //     )
+    //   );
+    // }
 
     //  search filter
 
     if (search) {
       conditions.push(
-        ilike(
-          schema.players.name,
-          `%${search}%`
+        or(
+          ilike(schema.players.name, `%${search}%`),
+          ilike(schema.players.school, `%${search}%`)
         )
       );
     }
+
+    const [{ count }] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(schema.players)
+    .where(and(...conditions));
+
+    const total = Number(count);
+    const totalPages = Math.ceil(total / limitNum);
 
     const rows = await db
       .select({
@@ -113,7 +121,7 @@ router.get('/', async (req, res) => {
       data = data.filter(r => r.position === position);
     }
 
-    res.json({ success: true, data, total: data.length, page: pageNum, limit: limitNum, });
+    res.json({ success: true, data, total, page: pageNum, limit: limitNum, totalPages,});
   } catch (error) {
     console.error('[rankings]', error);
     res.status(500).json({ success: false, error: 'Failed to fetch rankings' });
